@@ -1,0 +1,729 @@
+diff -Naur discussion_material/xv6-public/defs.h p5/xv6-public/defs.h
+--- discussion_material/xv6-public/defs.h	2024-11-15 09:38:16.000000002 -0600
++++ p5/xv6-public/defs.h	2024-11-12 16:55:37.000000002 -0600
+@@ -186,5 +186,11 @@
+ int             copyout(pde_t*, uint, void*, uint);
+ void            clearpteu(pde_t *pgdir, char *uva);
+ 
++// p5
++int             alloc_page (struct proc *, int *);
++int             mappages(pde_t *pgdir, void *, uint , uint , int );
++pte_t *         walkpgdir(pde_t *pgdir, const void *, int );
++
++
+ // number of elements in fixed-size array
+ #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
+diff -Naur discussion_material/xv6-public/doubts.txt p5/xv6-public/doubts.txt
+--- discussion_material/xv6-public/doubts.txt	1969-12-31 18:00:00.000000000 -0600
++++ p5/xv6-public/doubts.txt	2024-11-14 16:13:37.000000002 -0600
+@@ -0,0 +1,13 @@
++1. what does PGROUNDUP do ?
++-> rounds up the given value to the nearest multiple of PGSIZE
++e.g. 
++
++2. what does PGROUNDDOWN do ?
++
++
++// is my structure for storing per map meta-data correct ?yes
++    // who calls trap() ? automatic
++    // how does my trap() know what userlevel address got accessed ? accessing via stack ? rcr2
++    // does watching remzi's video from p2 help for better understanding trap? no
++    // should i implement lazy allocation or file-backed mapping first ?yes
++    // do further tests like tc16 need lazy allocation for passing ?yes
+diff -Naur discussion_material/xv6-public/Makefile p5/xv6-public/Makefile
+--- discussion_material/xv6-public/Makefile	2024-11-15 09:38:15.000000002 -0600
++++ p5/xv6-public/Makefile	2024-11-11 08:08:24.000000002 -0600
+@@ -181,6 +181,7 @@
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
++	_test\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff -Naur discussion_material/xv6-public/proc.c p5/xv6-public/proc.c
+--- discussion_material/xv6-public/proc.c	2024-11-15 09:38:16.000000002 -0600
++++ p5/xv6-public/proc.c	2024-11-14 16:18:00.000000002 -0600
+@@ -112,6 +112,27 @@
+   memset(p->context, 0, sizeof *p->context);
+   p->context->eip = (uint)forkret;
+ 
++  // ----- p5 -----
++
++  // initialize the memory mapping meta-data
++  for(int i=0; i<16; i++)
++  {
++    // struct initialization
++    p->mapinfo[i].start_addr = -1;
++    p->mapinfo[i].end_addr = -1;
++    p->mapinfo[i].map_length = -1;
++    p->mapinfo[i].pages_in_map = -1;
++    p->mapinfo[i].file_desc = -1;
++  }
++
++  // set number of memory maps for the process = 0
++  p->num_maps = 0;
++
++  
++  // memset(p->start_addr, -1, 16*sizeof(int));
++  // memset(p->map_length, -1, 16*sizeof(int));
++  // memset(p->pages_in_map, -1, 16*sizeof(int));
++  // memset(p->file_desc, -1, 16*sizeof(int));
+   return p;
+ }
+ 
+diff -Naur discussion_material/xv6-public/proc.h p5/xv6-public/proc.h
+--- discussion_material/xv6-public/proc.h	2024-11-15 09:38:16.000000002 -0600
++++ p5/xv6-public/proc.h	2024-11-14 16:17:04.000000002 -0600
+@@ -32,6 +32,16 @@
+   uint eip;
+ };
+ 
++struct mapinfo{
++  int start_addr;       // starting virtual address of the wmap
++  int end_addr;         // ending virtual address of the wmap
++  int map_length;       // size of wmap memory 
++  int pages_in_map;     // pages allocated for that wmap
++  int file_desc;        // file descriptor if it is a file-backed mapping, else -1
++  // why am i not storing flags
++
++};
++
+ enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+ 
+ // Per-process state
+@@ -49,6 +59,16 @@
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
++
++  // p5 array of structs
++  struct mapinfo mapinfo[16];
++  int num_maps;
++  
++  // int num_maps;
++  // int start_addr[16];
++  // int map_length[16];
++  // int pages_in_map[16];
++  // int file_desc[16];
+ };
+ 
+ // Process memory is laid out contiguously, low addresses first:
+diff -Naur discussion_material/xv6-public/syscall.c p5/xv6-public/syscall.c
+--- discussion_material/xv6-public/syscall.c	2024-11-15 09:38:16.000000002 -0600
++++ p5/xv6-public/syscall.c	2024-11-12 14:40:32.000000002 -0600
+@@ -104,6 +104,13 @@
+ extern int sys_write(void);
+ extern int sys_uptime(void);
+ 
++// p5
++extern int sys_wmap(void);
++extern int sys_wunmap(void);
++extern int sys_va2pa(void);
++extern int sys_getwmapinfo(void);
++extern int sys_test(void);
++
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+ [SYS_exit]    sys_exit,
+@@ -126,6 +133,11 @@
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_wmap]    sys_wmap,
++[SYS_wunmap]    sys_wunmap,
++[SYS_va2pa]    sys_va2pa,
++[SYS_getwmapinfo]    sys_getwmapinfo,
++[SYS_test]    sys_test,
+ };
+ 
+ void
+diff -Naur discussion_material/xv6-public/syscall.h p5/xv6-public/syscall.h
+--- discussion_material/xv6-public/syscall.h	2024-11-15 09:38:16.000000002 -0600
++++ p5/xv6-public/syscall.h	2024-11-12 14:37:16.000000002 -0600
+@@ -20,3 +20,9 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++
++#define SYS_wmap   22
++#define SYS_wunmap 23
++#define SYS_va2pa  24
++#define SYS_getwmapinfo 25
++#define SYS_test   26
+diff -Naur discussion_material/xv6-public/sysproc.c p5/xv6-public/sysproc.c
+--- discussion_material/xv6-public/sysproc.c	2024-11-15 09:38:16.000000002 -0600
++++ p5/xv6-public/sysproc.c	2024-11-15 09:35:05.000000002 -0600
+@@ -6,6 +6,7 @@
+ #include "memlayout.h"
+ #include "mmu.h"
+ #include "proc.h"
++#include "wmap.h"         // p5
+ 
+ int
+ sys_fork(void)
+@@ -89,3 +90,315 @@
+   release(&tickslock);
+   return xticks;
+ }
++
++
++// ########################### p5 ###########################
++
++// to request physical memory pages 
++int sys_wmap(void)
++{
++  // code here
++  int start_va;         // starting virtual address requested by the user
++  int mem_length;       // size of memory requested by user 
++  int flags_val;        // MAP_FIXED | MAP_SHARED | MAP_ANONYMOUS
++  int fd;             // file descriptor 
++
++  // Extract arguments for sys_call
++  // Check : valid arguments provided
++  if(argint(0, &start_va)<0 || argint(1, &mem_length)<0 || argint(2, &flags_val)<0 || argint(3, &fd)<0)
++  {
++    return FAILED;
++  }
++
++  // check : maximum number of memory maps per process = 16
++  if(myproc()->num_maps >= 16)
++  {
++    return FAILED;
++  }
++
++  // check : virtual address is a multiple of PGSIZE(4096)
++  if(start_va%PGSIZE != 0)
++  {
++    // cprintf("debug\n");
++    return FAILED;
++  }
++  
++
++  // check : virtual address belongs [0x60000000, 0x80000000)
++  if(!(start_va >= 0x60000000 && start_va < 0x80000000))
++  {
++    return FAILED;
++  }
++
++  // last va of the user-requested wmap
++  int end_va = start_va + mem_length;
++
++  // check : overlapping maps
++  for (int i = 0; i < 16; i++)
++  {
++    if(myproc()->mapinfo[i].start_addr != -1)
++    {
++      int wmap_start = myproc()->mapinfo[i].start_addr;
++      int wmap_end = myproc()->mapinfo[i].start_addr + myproc()->mapinfo[i].map_length;
++      
++      // new wmap starts within an allocated wmap
++      if(start_va >= wmap_start && start_va < wmap_end)
++      {
++        // cprintf("debug1\n");
++        return FAILED;
++      }
++
++      // new wmap ends within an allocated wmap
++      if(end_va >= wmap_start && end_va < wmap_end)
++      {
++        // cprintf("debug2\n");
++        return FAILED;
++      }
++    }
++  }
++  
++  // copy of the starting address that the user requested
++  // int copy_va = start_va; 
++
++
++  // check : flags val --> 4-bit number e.g. 1110
++
++  // check for MAP_SHARED 0x0002
++  if(!(flags_val & MAP_SHARED))
++  {
++    // MAP_SHARED not set
++    return -1;
++  }
++
++  // check for MAP_FIXED 0x0004
++  if(!(flags_val & MAP_FIXED))
++  {
++    // MAP_FIXED not set
++    return -1;
++  }
++
++  // single page size = 4096 bytes
++  // assign multiple pages if requested memory size > 4096
++  // loop to allocate multiple physical pages, if needed
++  int num_pages = mem_length/PGSIZE;
++
++  // if requested memory is not a multiple of page size
++  if(mem_length%PGSIZE != 0)
++  {
++    num_pages += 1;
++  }
++  
++  // for(int i=0; i<num_pages; i++)
++  // {
++  //   // allocate single page
++  //   char *mem = kalloc();
++  //   // cprintf("physical address of allocated page %d : %x\n", i, V2P(mem));
++
++  //   // create PTE -> store PPN & flags
++  //   if (mappages(myproc()->pgdir, (char*)copy_va, 4096, V2P(mem), PTE_W | PTE_U) == -1)
++  //   {
++  //     return -1;
++  //   }
++
++  //   // starting address of the next virtual page
++  //   copy_va += 0x1000;
++  // }
++
++  // -------------- Handle file-backed mapping --------------
++
++
++  // // check for MAP_ANONYMOUS 0x0004
++  // if(!(flags_val & MAP_ANONYMOUS))
++  // {
++  //   // MAP_ANONYMOUS not set -> file-backed mapping
++  //   struct file *f;
++  //   if((f=myproc()->ofile[fd]) == 0)
++  //   {
++  //     return FAILED;
++  //   }
++  //   fileread(f, (char*)start_va, mem_length);
++    
++  // }
++
++  // -------------- update memory mapping meta-data --------------
++
++  // increment number of wmaps 
++  myproc()->num_maps += 1;
++  
++  for(int i=0; i<16; i++)
++  {
++    if(myproc()->mapinfo[i].start_addr == -1)
++    {
++      myproc()->mapinfo[i].start_addr = start_va;
++      myproc()->mapinfo[i].end_addr = start_va+mem_length-1;
++      myproc()->mapinfo[i].map_length = mem_length;
++      myproc()->mapinfo[i].pages_in_map = 0;
++
++      if(!(flags_val & MAP_ANONYMOUS))
++      {
++        myproc()->mapinfo[i].file_desc = fd;
++      }
++      break;
++    }
++  }
++
++  // return the starting va of the newly created mapping
++  return start_va;
++}
++
++
++
++int sys_wunmap(void)
++{
++  int start_va;
++  if(argint(0, &start_va)<0)
++  {
++    cprintf("argint failed\n");
++    return -1;
++  }
++
++  // int copy_va = start_va;
++
++  // find if a memory map for start_va exists
++  int map_index = -1;
++  for(int i=0; i<16; i++)
++  {
++    if(myproc()->mapinfo[i].start_addr == start_va)
++    {
++      // cprintf("mapping found\n");
++      map_index = i;
++      break;
++    }
++  }
++
++  // no such memory map exists
++  if(map_index == -1)
++  {
++    cprintf("map_index = -1\n");
++    return -1;
++  }
++
++  // -------- Handle file-backed mapping -------
++  
++  // write the changes made to the mapped memory back to disk 
++  // when you're removing the mapping. 
++  // You can assume that the offset is always 0.
++
++  // check : if file-backed only then do the following
++
++  // struct file *f;
++  // if((f=myproc()->ofile[myproc()->mapinfo[map_index].file_desc]) == 0)
++  // {
++  //   return FAILED;
++  // }
++
++  // filewrite(f, (char*)myproc()->mapinfo[map_index].start_addr, myproc()->mapinfo[map_index].map_length);
++
++  // reset the metadata
++  
++  myproc()->mapinfo[map_index].start_addr = -1;
++  myproc()->mapinfo[map_index].end_addr = -1;
++  myproc()->mapinfo[map_index].map_length = -1;
++  myproc()->mapinfo[map_index].file_desc = -1;
++
++  // free each page in the map
++  // for(int i=; i<16; i++)
++  // {
++  //   // pte_t *pte = walkpgdir(myproc()->pgdir, (char*)copy_va, 0);   // get the page-table entry
++  //   // int physical_address = PTE_ADDR(*pte);                        // Access the upper 20-bit of PTE
++  //   // kfree(P2V(physical_address));                                 // free the physical memory
++  //   // *pte = 0;                                                     // convert to kernel va, free the PTE
++  //   // copy_va += 0x1000;                                            // Increment va to next va
++
++  // }
++
++  // myproc()->pages_in_map[map_index] = -1;
++  myproc()->mapinfo[map_index].pages_in_map = -1;
++  myproc()->num_maps -= 1;
++
++  return 0;
++}
++
++
++/*
++To translate a virtual address to physical address 
++according to the page table for the calling process.
++*/
++int sys_va2pa(void)
++{
++  // 
++  int user_va;
++  if(argint(0, &user_va)<0)
++  {
++    return -1;
++  }
++
++  // page-table entry for the given virtual address
++  pte_t *pte = walkpgdir(myproc()->pgdir, (char*)user_va, 0);
++
++  cprintf("pte=%x\n", *pte);
++  // check if PTE is present
++  if((*pte & PTE_P) == 0)
++  {
++    return FAILED;
++  }
++
++  int ppn = PTE_ADDR(*pte);
++
++  int offset = user_va & 0xFFF;
++  
++  int pa = ppn | offset;
++
++  // cprintf("ppn=%x\noffset=%x\npa=%x\n", ppn, offset, pa);
++  return pa;
++}
++
++int sys_getwmapinfo(void)
++{
++  // pointer for the struct argument
++  struct wmapinfo *ptr;
++
++  // check if argument are present & within allocated 
++  // address space
++  if(argptr(0, (void*)&ptr, sizeof(*ptr)) < 0)
++  {
++    return -1;
++  }
++
++  // Null pointer handled
++  if(ptr==0)
++  {
++    return -1;
++  }
++
++  int index = 0;
++  for(int i=0; i<16; i++)
++  {
++    if(myproc()->mapinfo[i].start_addr != -1)
++    {
++      // ptr->addr[index] = myproc()->start_addr[i];
++      // ptr->length[index] = myproc()->map_length[i];
++      // ptr->n_loaded_pages[index] = myproc()->pages_in_map[i];
++
++
++      ptr->addr[index] = myproc()->mapinfo[i].start_addr;
++      ptr->length[index] = myproc()->mapinfo[i].map_length;
++      ptr->n_loaded_pages[index] = myproc()->mapinfo[i].pages_in_map;
++      index++;
++    }
++    else
++    {
++      ptr->addr[index] = 0;
++      ptr->length[index] = 0;
++      ptr->n_loaded_pages[index] = 0;
++    }
++  }
++  ptr->total_mmaps = index;
++  return 0;
++}
++
++
++int sys_test(void)
++{
++  return myproc()->pid;
++}
+diff -Naur discussion_material/xv6-public/test.c p5/xv6-public/test.c
+--- discussion_material/xv6-public/test.c	1969-12-31 18:00:00.000000000 -0600
++++ p5/xv6-public/test.c	2024-11-14 18:42:22.000000002 -0600
+@@ -0,0 +1,52 @@
++// test.c
++#include "types.h"
++#include "stat.h"
++#include "user.h"
++#include "wmap.h"
++
++int main(void) 
++{
++
++  struct wmapinfo wminfo;
++  // printf(1, "The process ID is: %d\n", test());
++
++  printf(1, "The physical address is: %x\n", va2pa(0x60000123));
++
++
++  // printf(1, "The return value of getwmapinfo: %d\n", getwmapinfo(&wminfo));
++  // printf(1, "total wmaps = %d\n", wminfo.total_mmaps);
++  
++
++  uint address = wmap(0x60000000, 8192, MAP_FIXED | MAP_SHARED | MAP_ANONYMOUS, -1);
++  printf(1, "The address returned by wmap: %x\n", address);
++
++
++  printf(1, "The return value of getwmapinfo: %d\n", getwmapinfo(&wminfo));
++  printf(1, "total wmaps = %d\n", wminfo.total_mmaps);
++  printf(1, "address length pages\n");
++  for(int i=0; i<16; i++)
++  {
++    printf(1, "%x %d %d\n", wminfo.addr[i], wminfo.length[i], wminfo.n_loaded_pages[i]);
++  }
++
++
++  printf(1, "The physical address is: %x\n", va2pa(0x60000123));
++
++  // address = wmap(0x60001000, 8192, MAP_FIXED | MAP_SHARED | MAP_ANONYMOUS, -1);
++  // printf(1, "The address returned by wmap: %x\n", address);
++
++
++  printf(1, "Return value wunmap is: %d\n", wunmap(0x60000000));
++  
++  
++  printf(1, "The return value of getwmapinfo: %d\n", getwmapinfo(&wminfo));
++  printf(1, "total wmaps = %d\n", wminfo.total_mmaps);
++  printf(1, "address length pages\n");
++  for(int i=0; i<16; i++)
++  {
++    printf(1, "%x %d %d\n", wminfo.addr[i], wminfo.length[i], wminfo.n_loaded_pages[i]);
++  }
++
++  printf(1, "The physical address is: %x\n", va2pa(0x60000123));
++  exit();
++}
+diff -Naur discussion_material/xv6-public/trap.c p5/xv6-public/trap.c
+--- discussion_material/xv6-public/trap.c	2024-11-15 09:38:16.000000002 -0600
++++ p5/xv6-public/trap.c	2024-11-14 20:24:22.000000002 -0600
+@@ -78,6 +78,79 @@
+     lapiceoi();
+     break;
+ 
++  case T_PGFLT: // T_PGFLT = 14
++
++    //cprintf("Page Fault\n");
++
++    // address that caused the page fault
++    int pgflt_va = rcr2();
++
++    // check if pgflt_va is present within any allocated map
++
++    // location of wmap in proc struct
++    int map_index = -1;                   
++    for(int i=0; i<16; i++)
++    {
++      if(pgflt_va >= myproc()->mapinfo[i].start_addr && pgflt_va <= myproc()->mapinfo[i].end_addr)
++      {
++        map_index = i;
++        break;
++      }
++    }
++
++    if(map_index == -1)
++    {
++      cprintf("Segmentation Fault\n");
++      // kill the process
++      // should i call kill() or exit()
++    }
++
++
++    // -------- handle lazy allocation --------
++
++
++    // calculate : which page of the map to allocate
++    // int offset = pgflt_va - myproc()->mapinfo[map_index].start_addr;
++
++    // starting address of the page to be allocated
++    int alloc_va = PGROUNDDOWN(pgflt_va);
++
++    // allocate single page
++    char *mem = kalloc();
++    // cprintf("physical address of allocated page %d : %x\n", i, V2P(mem));
++
++    // create PTE -> store PPN & flags
++    if (mappages(myproc()->pgdir, (char*)alloc_va, 4096, V2P(mem), PTE_W | PTE_U) == -1)
++    {
++      cprintf("mappages() failed\n");
++      // kill the process
++    }
++
++    int fd = myproc()->mapinfo[map_index].file_desc;
++
++    if(fd != -1)
++    {
++      // MAP_ANONYMOUS not set -> file-backed mapping
++      
++      struct file *f;
++      if(fd < 0 || fd >= NOFILE ||(f=myproc()->ofile[fd]) == 0)
++      {
++        cprintf("fd = %d\n", fd);
++        cprintf("file struct pointer = %p\n", f);
++        cprintf("Can't find the file struct\n");
++        // kill the process
++        kill(myproc()->pid);
++      }
++      fileread(f, (char*)alloc_va, 4096);
++      
++    }
++    myproc()->mapinfo[map_index].pages_in_map += 1;
++    
++    // else:
++    break;  
++        
++
++
+   //PAGEBREAK: 13
+   default:
+     if(myproc() == 0 || (tf->cs&3) == 0){
+diff -Naur discussion_material/xv6-public/types.h p5/xv6-public/types.h
+--- discussion_material/xv6-public/types.h	2024-11-15 09:38:16.000000002 -0600
++++ p5/xv6-public/types.h	2024-11-12 17:04:15.000000002 -0600
+@@ -2,3 +2,6 @@
+ typedef unsigned short ushort;
+ typedef unsigned char  uchar;
+ typedef uint pde_t;
++
++// p5
++typedef uint pte_t;
+diff -Naur discussion_material/xv6-public/user.h p5/xv6-public/user.h
+--- discussion_material/xv6-public/user.h	2024-11-15 09:38:16.000000002 -0600
++++ p5/xv6-public/user.h	2024-11-12 14:27:19.000000002 -0600
+@@ -1,5 +1,6 @@
+ struct stat;
+ struct rtcdate;
++struct wmapinfo;
+ 
+ // system calls
+ int fork(void);
+@@ -24,6 +25,14 @@
+ int sleep(int);
+ int uptime(void);
+ 
++//p5
++uint wmap(uint addr, int length, int flags, int fd);    // Task 1
++int wunmap(uint addr);                                  // Task 2
++uint va2pa(uint va);                                    // Task 5
++int getwmapinfo(struct wmapinfo *wminfo);               // Task 6
++
++int test (void);
++
+ // ulib.c
+ int stat(const char*, struct stat*);
+ char* strcpy(char*, const char*);
+diff -Naur discussion_material/xv6-public/usys.S p5/xv6-public/usys.S
+--- discussion_material/xv6-public/usys.S	2024-11-15 09:38:16.000000002 -0600
++++ p5/xv6-public/usys.S	2024-11-12 14:35:17.000000002 -0600
+@@ -29,3 +29,9 @@
+ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
++
++SYSCALL(wmap)
++SYSCALL(wunmap)
++SYSCALL(va2pa)
++SYSCALL(getwmapinfo)
++SYSCALL(test)
+diff -Naur discussion_material/xv6-public/vm.c p5/xv6-public/vm.c
+--- discussion_material/xv6-public/vm.c	2024-11-15 09:38:16.000000002 -0600
++++ p5/xv6-public/vm.c	2024-11-13 12:06:57.000000002 -0600
+@@ -32,7 +32,7 @@
+ // Return the address of the PTE in page table pgdir
+ // that corresponds to virtual address va.  If alloc!=0,
+ // create any required page table pages.
+-static pte_t *
++pte_t *
+ walkpgdir(pde_t *pgdir, const void *va, int alloc)
+ {
+   pde_t *pde;
+@@ -57,7 +57,7 @@
+ // Create PTEs for virtual addresses starting at va that refer to
+ // physical addresses starting at pa. va and size might not
+ // be page-aligned.
+-static int
++int
+ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+ {
+   char *a, *last;
+@@ -385,6 +385,19 @@
+   return 0;
+ }
+ 
++// p5
++// allocate a page from kernel & create a PTE
++int alloc_page (struct proc *p, int * start_ptr)
++{
++  // allocate pages
++    char *mem = kalloc();
++
++    // create PTE mapping VPN -> PPN
++    return mappages(p->pgdir, start_ptr, 4096, V2P(mem), PTE_W | PTE_U);
++
++}
++
++
+ //PAGEBREAK!
+ // Blank page.
+ //PAGEBREAK!
+diff -Naur discussion_material/xv6-public/wmap.h p5/xv6-public/wmap.h
+--- discussion_material/xv6-public/wmap.h	1969-12-31 18:00:00.000000000 -0600
++++ p5/xv6-public/wmap.h	2024-11-11 12:58:15.000000002 -0600
+@@ -0,0 +1,17 @@
++// Flags for wmap
++#define MAP_SHARED 0x0002
++#define MAP_ANONYMOUS 0x0004
++#define MAP_FIXED 0x0008
++
++// When any system call fails, returns -1
++#define FAILED -1
++#define SUCCESS 0
++
++// for `getwmapinfo`
++#define MAX_WMMAP_INFO 16
++struct wmapinfo {
++    int total_mmaps;                    // Total number of wmap regions
++    int addr[MAX_WMMAP_INFO];           // Starting address of mapping
++    int length[MAX_WMMAP_INFO];         // Size of mapping
++    int n_loaded_pages[MAX_WMMAP_INFO]; // Number of pages physically loaded into memory
++};

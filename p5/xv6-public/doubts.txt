@@ -1,0 +1,189 @@
+Piazza Posts
+
+@835:   max number of mmap regions per process is 16
+        max number of pages allocated for mmap = 4GB/4KB
+
+@836:   mmaps are per process, create a struct to store details in PCB
+
+@857:   starting virtual address of an mmap must be a multiple of 
+        of PGSIZE, if not return FAILED
+
+@859:   remove static & add function definition to defs.handle
+
+@867:   1. allocate only single page for a page fault
+        2. use offset in file struct to copy correct page in file
+        3. for a page fault, you fill in the page which the faulting
+        virtual address falls in
+
+@869:   va2pa should return FAILED on accessing unallocated page within
+        a wmap regions
+
+@883:   va2pa should just translate given va to pa, irrespective of the 
+        value of va
+
+@870:   length value of a wmap region is not guaranteed to be a multiple
+        of PGSIZE
+
+@882:   use rcr2() to access the page fault address
+
+
+@891:** trap 14 is segmentation fault
+
+@898:   closed files can be accesses by duplicating the fd
+
+@899:   add the definition of pte_t to types.h
+
+@897:** 1. MAP_SHARED is a concept applicable only to wmap region
+        2. implement COW for the process's memory except of wmapped
+        memory(always MAP_SHARED)
+        3. 
+
+@904:** reference count of pages needs to be safe for concurrent 
+        access. use kalloc/kfree lock acquisition
+
+
+
+
+
+
+
+1. what does PGROUNDUP do ?
+-> rounds up the given value to the nearest multiple of PGSIZE
+e.g. 
+
+2. what does PGROUNDDOWN do ?
+
+
+// is my structure for storing per map meta-data correct ?yes
+    // who calls trap() ? automatic
+    // how does my trap() know what userlevel address got accessed ? accessing via stack ? rcr2
+    // does watching remzi's video from p2 help for better understanding trap? no
+    // should i implement lazy allocation or file-backed mapping first ?yes
+    // do further tests like tc16 need lazy allocation for passing ?yes
+
+
+-x-
+
+1. when unmapping how do i unmap the the last page ? full page or only worth the size of the memory ?
+for eg. last page is 4096 bytes but data is only 2048 bytes -- Yes copy only 2048
+
+
+2. what does sz store ?? 
+
+
+    -----------------
+    |               |
+    |               |   <- kernel (contains pgtbl)
+    |               |
+    -----------------   <- 80000000 (Kernbase)
+    |               |    <- user area : for wmaps
+    -----------------
+    |               |    <-user area : sz
+    |               |
+    -----------------
+3. should i update sz on adding a page to the process memory ? Will cauze copyuvm problems. NO DON'T DO
+
+4. COW : i understand that memory is split into 2 sections, sz & wmaps
+
+5. COW : should copy on write make a single mapping to both sz & wmaps ? 
+
+no COW for WMPAPS -> COW only for sz part of the user space. WMAPS are always shared & readable by both processes
+
+
+
+6. failing elf test 21 should we do cow ?
+can work independently on this. part is small
+
+
+
+7. COW : 2 process PTE has same pa for same va -> so saved duplication of pages. Yes
+
+
+8. now 1 process wants to write to shared page, but page readable only -> does this
+permission issue automatically trigger a page fault ?
+my understanding is : physical page is present but no permission to write
+
+calls the page fault handler automatically
+
+so does the page fault handler handle 2 cases in an if statement
+    a. page not found
+    b. page found but not writable
+based on the virtual address boundary of mmap 6000-8000
+
+9. point-1 on COW implementing
+
+for sz part of the process : 1 process wants to write -> 2 physical pages created -> parent & child mapped to 2 different
+physical pages -> both pages made writable -> assign to either parent or child
+
+if 2 processes are present make both writable
+
+if more than 2 processes then 1 asks to write -> create physical page writable but original page readable 
+wait for reference to decrement to 2 
+
+3 processes -> 1 asks to write -> 1 physical writable page -> but that forks then -> then make the new page readable
+
+
+
+what if you fork multiple times ?
+
+
+
+for WMAPS : but now how do changes made in either be visible to 
+the other ?? MAP_SHARED 
+
+confusion :: MAP_SHARED says it should be visible -> COW says in 2 different physical pages
+
+
+is reference count only for cow pages ?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Test Summary
+
+TEST_9  Summary: MAP+LAZY: Checks for lazy allocation in anon mapping
+
+TEST_10 Summary: MAP+LAZY: Checks for lazy allocation in filebacked mapping
+
+TEST_11 Summary: MAP+LAZY+STRESS: Checks for lazy allocation in filebacked mapping
+
+TEST_12 Summary: UNMAP: Unmap one anonymous map
+
+TEST_13 Summary: UNMAP: Unmaps a filebacked map
+
+TEST_14 Summary: UNMAP+DEALLOC: Unmap accessed anonymous map and check for memory deallocation
+
+TEST_15 Summary: UNMAP+DEALLOC: Unmap an accessed filebacked map and check for memory deallocation
+
+TEST_16 Summary: UNMAP: Edit a filebacked map and verify its changes are reflected
+
+TEST_17 Summary: Fork: Same maps exist in both parent and multiple childs
+
+TEST_18 Summary: Fork: Same map contents exist in both parent and multiple childs
+
+TEST_19 Summary: Fork+EDIT: Both parent and child can see each other's edits in anonymous shared mappings
+
+TEST_22 Summary: COW: allocated array has same pa in parent and child before modification
+
+TEST_23 Summary: COW: allocated array has diff pa in parent and child after modification
+//
+// Checks whether the child process sees old contents of the mapping
+// Checks whether the parent process sees the old contents of the mapping after child
+// unmaps Does not check for deallocation of pages Does not check for lazy allocation
+// of pages
+
+TEST_24 Summary: COW: kfreeing child's page does not affect parent's page in COW
+
+TEST_25 Summary: COW+STRESS: static parent arr 50000 pages, can't fork child without COW

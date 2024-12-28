@@ -1,0 +1,8 @@
+#!/bin/bash
+
+testpath=$(pwd)
+projectpath=$(realpath "$(pwd)/../xv6-public")
+echo "testpath: $testpath"
+echo "projectpath: $projectpath"
+python3 $testpath/p5.py --test-path $testpath --project-path $projectpath $@ | tee runtests.log
+

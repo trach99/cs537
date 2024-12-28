@@ -1,0 +1,228 @@
+########################### Points from the git Repo ###########################
+
+1. block size = 512B
+
+2. every inode always starts at the location divisible by 512, "allocate" full 512B for each inode.
+
+4. The disk is a file -> but you mmap the file -> so then you are working with memory
+
+2. number of inodes in the file system         =  command line argument to mkfs.command
+   number of data blocks in the file system    =  command line argument to mkfs.command (multiple of 32)
+
+in raid 1 if data blocks is 224 then it means that each disk has 224 data blocks
+in raid 0 it means you have 224 data blocks in total
+
+
+creating an empty file system vs mounting 
+
+1. initializing the ds on the empty disk for the  filesystem 
+2. making it ready to be mountable
+
+mounting = going & actually using the ds within the file system
+
+
+####################### Piazza Clarifications #######################
+
+@1042 : root directory inode number = 0
+
+@1042 : Disks are just files, so their name could (theoretically) be up to 255 characters.
+           You don't need to ensure that the superblock is less than 512 bytes. 
+
+@1046 : Names of the disks are not important & can change. 
+
+@1046 : The fields you add into superblock can differ (and will differ) to store disk order
+
+@1074 : All metadata except superblock are identical on all drives.
+
+@1076 : Yes you can assume all disks are of the same size.
+
+@1084 : No entries should be allocated to "." & "..". They are virtual concepts
+
+@1108 : think of correct operation as return 0, 
+        usage errors as return 1, 
+        and runtime errors as return -1. 
+        For cases like this, just follow the behavior in the tests.
+
+@1110 : include your #define etc 30 before your fuse.h line
+
+@1114 : use man 7 inode to learn about the different inode fields
+
+@1118 : Filenames are irrelevant. What matters is the content of your filesystem. 
+        Hence you have to store as much information as you need in your filesystem.
+
+@1121 : Size of root node = 0 Reason: no allocated blocks or entries in empty FS
+
+@1121 : To assign uid & gid, use the uid & gid of the calling process
+
+@1125 : What is the max number of blocks ? 
+        It depends how large the disk file is.
+        There needs to be enough physical space in the file to fit all the requested blocks.
+
+@1130 : number of inodes have to rounded to 32, since inodes are also stored in blocks
+
+@1138 : manage memory leaks as best practice.
+
+@1200 : in wfs_dentry the num field stands for inode_num
+
+
+Doutbts : 
+
+##################################  to do  ##################################
+
+// piazza post for why the test-7 has something in the out file
+// change mode_t using s_isreg | 0700
+// time function in 
+// do the unmap in mkfs & map the disks again in wfs.c
+// piazza : what does number of blocks really means in raid 0 vs 1. they mean the logical number of blocks
+
+
+##############################################################################
+
+when they give the "total number of blocks in the system" in mkfs what does it include 
+data blocks only ?
+data blocks + inode blocks + other metadata ?
+
+
+
+1. what is pre-rc ? what is rc ? 
+2. how does the tester code work ? why is there no c-file to check what the tester is doing ?
+
+   is Each disk is of the same size ? No
+
+3. what do the cmd line args mean in each mode ?
+   total inodes in the system 
+   total "data" blocks in the system (data blocks + inode blocks)
+
+4. what do you include in the metadata that needs to be copied to each disk always 
+   . superblock
+   . inode bitmap
+   . data bitmap
+   . inodes
+
+   Yes
+
+5. what if the total number of blocks = total size of all the disks ?
+
+6. In theory, the inode number wasn't stored in the inode ? how is it stored there ? inode num is the index in bitmap
+
+7. Are we doing the mmap wrong ? were we supposed to do it after the mounting which happens in wfs.happens
+
+unmap at the end of mkfs program 
+
+8. how to see what is happening in the disk image ? xxd -e .. command
+
+
+
+
+
+
+
+####################### Test Cases #######################
+
+1. mkfs: default fs, two disks
+2. mkfs: large fs, four disks
+3. mkfs: one disk is too few
+4. mkfs: default fs, striped
+5. mkfs: round blocks correctly 1
+6. mkfs: round blocks correctly 2
+7. mkfs: bad raid mode
+8. mkfs: too many blocks requested
+9. mkfs: odd number of disks okay
+
+43. raid1 -- read: large file
+44. raid1 -- interleaved writes and readback
+51. raid0 -- read: small file
+52. raid0 -- read: large file
+53. raid0 -- interleaved writes and readback
+56. raid0 -- mount in other order with readback
+
+
+
+47. raid0 -- rm: create previously deleted file with data
+57. raid1v -- readback with a corrupted disk
+
+// -x-
+
+a check the condition of the too many blocks requested for different raid modes
+
+b find out the functions to add time to the inode -> check if time(NULL) is the correct method 
+   also check if why does it start from 1970
+
+c check whether your understanding of the inode bit map is correct
+   1. use unsigned initializing
+   2. this gives me 32-bits per element
+   3. set all uint elements to 0
+   4. set only the 1st bit LSB to 1 for the root inode
+
+d check whether what u have written to the inode is correct
+
+
+###########################################################################################################
+
+1. Every file/directory has an inode. Each directory stores dirents in its data blocks. In RAID0 these dirents 
+   will be striped.
+
+2. I don't understand RAID1v. Why will a block be in majority when all drives store the exact same blocks ??
+this deals with data corruption. what if 1 disk is corrupted then you need to check all disks to make sure u
+have the ryt block in majority
+
+3. number of hardlinks to the root inode in an empty filesystem. doesn't matter
+directory always has a reference to itself
+
+no explicit dirents for . & .. 
+
+4. What is the output in 3.out. no problem
+
+5. does the root node have a directory entry ? eg. stat mnt  
+mnt is the mount point not a directory in the filesystem
+
+6. what do dirents store ? file name or full file path. filename
+
+7. will the cli args given to wfs maintain order : disks > fuse_op > mnt. No jumbling
+
+8. will paths given always be absolute paths from mnt ?
+paths start at root 
+fuse things can handle internal mkdirs search online
+
+traversal algo -> search for directory entry of the next name in the previous directory. 
+
+
+
+
+// Doubts post thanksgiving
+
+
+
+1. when calling write is it assumed that the file is open() with the correct permissions ?
+2. or do we need to open the file
+3. return codes in mkfs
+
+
+
+if command line args are wrong its a usage error
+
+the -b in mkfs command line args implies the number of data blocks needed in 1 disk or the size of the d-bitmap in the disk
+
+the index of blocks array % cnt_disks gives the disk in raid mode 0
+index at 0th block will always be stored on disk 0
+index at 1st block will always be stored on disk 1
+
+
+
+/// DOUBTS ////
+
+1. size manipulation for overwriting files
+2. when i clear dentry should i check if the d-block is empty ?
+current case : 1 dentry in dentry-block -> it is removed -> but directory holds onto the dentry block -> new file created 
+-> new dentry block assigned because condition is only to check size 
+currently i remove the dentry block unless it is blocks[0]
+3. empty directory but multiple allocated data blocks for dentrys that were cleared in the past
+4. tc 36 & 39 want 1 d-block inspite of no dentry
+
+what permissions need to be given for the directory ? 0644
+
+
+//// To Work ////
+
+does rmdir only work on empty directories or we need to check if the directory is empty?
+ 

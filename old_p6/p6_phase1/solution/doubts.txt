@@ -1,0 +1,114 @@
+1. block size = 512B
+
+2. Inodes:  every inode always starts at the location divisible by 512
+            "allocate" full 512B for each inode.
+
+4. The disk is a file -> but you mmap the file -> so then you are working with memory
+
+
+
+
+
+2. number of inodes in the file system         =  command line argument to mkfs.command
+   number of data blocks in the file system    =  command line argument to mkfs.command (multiple of 32)
+
+in raid 1 if data blocks is 224 then it means that each disk has 224 data blocks
+in raid 0 it means you have 224 data blocks in total
+
+
+creating an empty file system vs mounting 
+
+1. initializing the ds on the empty disk for the  filesystem 
+2. making it ready to be mountable
+
+mounting = going & actually using the ds within the file system
+
+
+Doutbts : 
+
+##################################  to do  ##################################
+
+// piazza post for why the test-7 has something in the out file
+// change mode_t using s_isreg | 0700
+// time function in 
+// do the unmap in mkfs & map the disks again in wfs.c
+// piazza : what does number of blocks really means in raid 0 vs 1. they mean the logical number of blocks
+
+
+##############################################################################
+
+when they give the "total number of blocks in the system" in mkfs what does it include 
+data blocks only ?
+data blocks + inode blocks + other metadata ?
+
+
+
+1. what is pre-rc ? what is rc ? 
+2. how does the tester code work ? why is there no c-file to check what the tester is doing ?
+
+   is Each disk is of the same size ? No
+
+3. what do the cmd line args mean in each mode ?
+   total inodes in the system 
+   total "data" blocks in the system (data blocks + inode blocks)
+
+4. what do you include in the metadata that needs to be copied to each disk always 
+   . superblock
+   . inode bitmap
+   . data bitmap
+   . inodes
+
+   Yes
+
+5. what if the total number of blocks = total size of all the disks ?
+
+6. In theory, the inode number wasn't stored in the inode ? how is it stored there ? inode num is the index in bitmap
+
+7. Are we doing the mmap wrong ? were we supposed to do it after the mounting which happens in wfs.happens
+
+unmap at the end of mkfs program 
+
+8. how to see what is happening in the disk image ? xxd -e .. command
+
+
+
+####################### Piazza Clarifications #######################
+
+@1042 : root directory inode number = 0
+
+@1042 : Disks are just files, so their name could (theoretically) be up to 255 characters.
+           You don't need to ensure that the superblock is less than 512 bytes. 
+
+
+
+
+
+
+####################### Test Cases #######################
+
+1. mkfs: default fs, two disks
+2. mkfs: large fs, four disks
+3. mkfs: one disk is too few
+4. mkfs: default fs, striped
+5. mkfs: round blocks correctly 1
+6. mkfs: round blocks correctly 2
+7. mkfs: bad raid mode
+8. mkfs: too many blocks requested
+9. mkfs: odd number of disks okay
+
+
+
+// -x-
+
+a check the condition of the too many blocks requested for different raid modes
+
+b find out the functions to add time to the inode -> check if time(NULL) is the correct method 
+   also check if why does it start from 1970
+
+c check whether your understanding of the inode bit map is correct
+   1. use unsigned initializing
+   2. this gives me 32-bits per element
+   3. set all uint elements to 0
+   4. set only the 1st bit LSB to 1 for the root inode
+
+d check whether what u have written to the inode is correct

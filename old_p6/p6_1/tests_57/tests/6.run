@@ -1,0 +1,1 @@
+./wfs-check-metadata.py --mode mkfs --inodes 64 --blocks 256 --disks test-disk1 test-disk2
